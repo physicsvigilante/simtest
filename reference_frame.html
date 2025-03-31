@@ -1,6 +1,5 @@
 <!DOCTYPE html>
-<html>
-<head>
+<html><head>
   <title>2D Motion Simulator with Profile Input</title>
   <style>
     body {
@@ -39,12 +38,14 @@
 <body>
 
 <!-- Grid Toggles -->
+<button onclick="saveHTML()">Save State as HTML</button>
+
 <button onclick="toggle('background')">Toggle Background Grid</button>
 <button onclick="toggle('black')">Toggle Black Grid</button>
 <button onclick="toggle('grey')">Toggle Grey Grid</button>
 <br><br>
 <label for="profileInput">Red X Profile:</label>
-<input id="profileInput" type="text" placeholder="2:3:v:2:3::4:1" style="width:200px;">
+<input id="profileInput" type="text" placeholder="2:3:v:2:3::4:1" style="width:200px;" value="">
 
 <!-- Table of Inputs -->
 <table>
@@ -72,17 +73,17 @@
       <td><input id="ayb" type="number" value="0"></td>
     </tr>
     <tr><td>Black</td>
-      <td><input id="x0k" type="number" value="0"></td>
+      <td><input id="x0k" type="number" value="-15"></td>
       <td><input id="y0k" type="number" value="0"></td>
-      <td><input id="uxk" type="number" value="1"></td>
+      <td><input id="uxk" type="number" value="6"></td>
       <td><input id="uyk" type="number" value="0"></td>
       <td><input id="axk" type="number" value="0"></td>
       <td><input id="ayk" type="number" value="0"></td>
     </tr>
     <tr><td>Grey</td>
-      <td><input id="x0g" type="number" value="0"></td>
+      <td><input id="x0g" type="number" value="-2"></td>
       <td><input id="y0g" type="number" value="0"></td>
-      <td><input id="uxg" type="number" value="1"></td>
+      <td><input id="uxg" type="number" value="2"></td>
       <td><input id="uyg" type="number" value="0"></td>
       <td><input id="axg" type="number" value="0"></td>
       <td><input id="ayg" type="number" value="0"></td>
@@ -295,7 +296,28 @@ document.addEventListener("keydown", (e) => {
 
 // Init
 resetSimulation();
+function saveHTML() {
+  const inputs = Array.from(document.querySelectorAll('input'));
+  const doc = document.documentElement.outerHTML;
+  const parser = new DOMParser();
+  const htmlDoc = parser.parseFromString(doc, 'text/html');
+  inputs.forEach(input => {
+    const id = input.id;
+    const value = input.value;
+    const newInput = htmlDoc.getElementById(id);
+    if (newInput) newInput.setAttribute('value', value);
+  });
+
+  const updatedHTML = '<!DOCTYPE html>\n' + htmlDoc.documentElement.outerHTML;
+  const blob = new Blob([updatedHTML], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'motion_simulator_saved.html';
+  a.click();
+}
+
 </script>
 
-</body>
-</html>
+
+
+</body></html>

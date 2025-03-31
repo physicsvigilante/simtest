@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>2D Motion Simulator with Profile Input</title>
+  <style>
+    body {
+      background-color: #222;
+      color: #eee;
+      font-family: sans-serif;
+    }
+    table {
+      border-collapse: collapse;
+      margin-bottom: 10px;
+    }
+    th, td {
+      border: 1px solid #444;
+      padding: 4px;
+      text-align: center;
+    }
+    input[type="number"], input[type="text"] {
+      width: 60px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      padding: 2px;
+      text-align: right;
+    }
+    canvas {
+      border: 1px solid black;
+      display: block;
+      background: #eef;
+    }
+    button {
+      margin-top: 6px;
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Grid Toggles -->
+<button onclick="toggle('background')">Toggle Background Grid</button>
+<button onclick="toggle('black')">Toggle Black Grid</button>
+<button onclick="toggle('grey')">Toggle Grey Grid</button>
+<br><br>
+<label for="profileInput">Red X Profile:</label>
+<input id="profileInput" type="text" placeholder="2:3:v:2:3::4:1" style="width:200px;">
+
+<!-- Table of Inputs -->
+<table>
+  <thead>
+    <tr>
+      <th>Particle</th>
+      <th>x₀</th><th>y₀</th><th>uₓ</th><th>uᵧ</th><th>aₓ</th><th>aᵧ</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Red</td>
+      <td><input id="x0r" type="number" value="0"></td>
+      <td><input id="y0r" type="number" value="0"></td>
+      <td><input id="uxr" type="number" value="0"></td>
+      <td><input id="uyr" type="number" value="0"></td>
+      <td><input id="axr" type="number" value="0"></td>
+      <td><input id="ayr" type="number" value="0"></td>
+    </tr>
+    <tr><td>Blue</td>
+      <td><input id="x0b" type="number" value="0"></td>
+      <td><input id="y0b" type="number" value="0"></td>
+      <td><input id="uxb" type="number" value="0"></td>
+      <td><input id="uyb" type="number" value="0"></td>
+      <td><input id="axb" type="number" value="0"></td>
+      <td><input id="ayb" type="number" value="0"></td>
+    </tr>
+    <tr><td>Black</td>
+      <td><input id="x0k" type="number" value="0"></td>
+      <td><input id="y0k" type="number" value="0"></td>
+      <td><input id="uxk" type="number" value="1"></td>
+      <td><input id="uyk" type="number" value="0"></td>
+      <td><input id="axk" type="number" value="0"></td>
+      <td><input id="ayk" type="number" value="0"></td>
+    </tr>
+    <tr><td>Grey</td>
+      <td><input id="x0g" type="number" value="0"></td>
+      <td><input id="y0g" type="number" value="0"></td>
+      <td><input id="uxg" type="number" value="1"></td>
+      <td><input id="uyg" type="number" value="0"></td>
+      <td><input id="axg" type="number" value="0"></td>
+      <td><input id="ayg" type="number" value="0"></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- Control Buttons -->
+<button onclick="startSimulation()">Start</button>
+<button onclick="pauseSimulation()">Pause</button>
+<button onclick="resetSimulation()">Reset</button>
+<canvas id="canvas" width="1200" height="500"></canvas>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let redInitialX = 0, redInitialY = 0;
+let profileSegments = [], fullscreenGrid = false;
+let scale = 20, graphW = 200;
+let canvasW = 1200, canvasH = 500;
+canvas.width = canvasW; canvas.height = canvasH;
+let particles = {}, time = 0, interval = null, dt = 0.05, graphPoints = [];
+let showGrid = { background: true, black: true, grey: true };
+
+function toggle(type) { showGrid[type] = !showGrid[type]; }
+function getSimX() { return fullscreenGrid ? 0 : canvasW - (canvasW - 2 * graphW); }
+function getSimW() { return fullscreenGrid ? canvas.width : canvasW - 2 * graphW; }
+function getOriginX() { return Math.floor(getSimW() / 2 / scale) * scale + getSimX(); }
+function getOriginY() { return Math.floor(canvas.height / 2 / scale) * scale; }
+function worldToCanvas(x, y) {
+  return [getOriginX() + x * scale, getOriginY() - y * scale];
+}
+
+function parseProfile(str) {
+  const regex = /^(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?):(v|a):((?:-?\d+(?::)?)+)::((?:-?\d+(?::)?)+)$/;
+  const match = str.match(regex);
+  if (!match) return [];
+  redInitialX = parseFloat(match[1]);
+  redInitialY = parseFloat(match[2]);
+  const type = match[3];
+  const values = match[4].split(":").map(Number);
+  const times = match[5].split(":" ).map(Number);
+
+  const segments = [];
+  let time = 0, x0 = redInitialX, v0 = 0;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i], dur = times[i];
+    const seg = { type, value, start: time, end: time + dur, x0, v0 };
+    if (type === 'v') { x0 += value * dur; v0 = value; }
+    else if (type === 'a') { x0 += v0 * dur + 0.5 * value * dur * dur; v0 += value * dur; }
+    segments.push(seg); time += dur;
+  }
+  return segments;
+}
+
+function getParticle(idSuffix) {
+  return {
+    x0: +document.getElementById(`x0${idSuffix}`).value,
+    y0: +document.getElementById(`y0${idSuffix}`).value,
+    ux: +document.getElementById(`ux${idSuffix}`).value,
+    uy: +document.getElementById(`uy${idSuffix}`).value,
+    ax: +document.getElementById(`ax${idSuffix}`).value,
+    ay: +document.getElementById(`ay${idSuffix}`).value,
+    path: []
+  };
+}
+
+function startSimulation() {
+  const profile = document.getElementById("profileInput").value.trim();
+  if (profile) profileSegments = parseProfile(profile); else profileSegments = [];
+
+  particles = {
+    red: getParticle("r"),
+    blue: getParticle("b"),
+    black: getParticle("k"),
+    grey: getParticle("g")
+  };
+  Object.values(particles).forEach(p => p.path = []);
+  time = 0; graphPoints = [];
+  if (!interval) interval = setInterval(simulate, dt * 1000);
+}
+
+function simulate() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
+
+  for (const [name, p] of Object.entries(particles)) {
+    const t = time;
+    let x, vx;
+    const y0 = (name === "red" && profileSegments.length) ? redInitialY : p.y0;
+    const y = y0 + p.uy * t + 0.5 * p.ay * t * t;
+    const vy = p.uy + p.ay * t;
+
+    if (name === "red" && profileSegments.length) {
+      const seg = profileSegments.find(s => t >= s.start && t < s.end) || profileSegments.at(-1);
+      if (seg.type === 'v') {
+        vx = seg.value;
+        x = seg.x0 + vx * (t - seg.start);
+      } else {
+        vx = seg.v0 + seg.value * (t - seg.start);
+        x = seg.x0 + seg.v0 * (t - seg.start) + 0.5 * seg.value * (t - seg.start) ** 2;
+      }
+    } else {
+      x = p.x0 + p.ux * t + 0.5 * p.ax * t * t;
+      vx = p.ux + p.ax * t;
+    }
+
+    const [cx, cy] = worldToCanvas(x, y);
+    p.path.push([cx, cy]);
+
+    if (name === "black") drawAttachedGrid(cx, cy, "black", "black");
+    if (name === "grey") drawAttachedGrid(cx, cy, "gray", "grey");
+
+    ctx.beginPath();
+    p.path.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+    ctx.strokeStyle = name === "grey" ? "#aaa" : name;
+    ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
+    ctx.fillStyle = name === "grey" ? "#aaa" : name;
+    ctx.fill();
+
+    if (name === "red") graphPoints.push([t, x, y, vx, vy]);
+  }
+
+  if (!fullscreenGrid) drawGraphs();
+  time += dt;
+}
+
+function drawGrid() {
+  const simX = getSimX(), simW = getSimW();
+  const originX = getOriginX(), originY = getOriginY();
+  ctx.fillStyle = "#eef"; ctx.fillRect(simX, 0, simW, canvas.height);
+  if (!showGrid.background) return;
+  ctx.strokeStyle = "#ccc";
+  for (let x = simX; x <= simX + simW; x += scale) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += scale) {
+    ctx.beginPath(); ctx.moveTo(simX, y); ctx.lineTo(simX + simW, y); ctx.stroke();
+  }
+  ctx.strokeStyle = "#000";
+  ctx.beginPath(); ctx.moveTo(simX, originY); ctx.lineTo(simX + simW, originY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(originX, 0); ctx.lineTo(originX, canvas.height); ctx.stroke();
+  ctx.fillText("0", originX + 2, originY + 12);
+}
+
+function drawAttachedGrid(cx, cy, color, type) {
+  if (!showGrid[type]) return;
+  ctx.strokeStyle = color; ctx.save(); ctx.globalAlpha = 0.3;
+  for (let dx = -10; dx <= 10; dx++) {
+    const x = cx + dx * scale;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let dy = -10; dy <= 10; dy++) {
+    const y = cy + dy * scale;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(cx - 30, cy); ctx.lineTo(cx + 30, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - 30); ctx.lineTo(cx, cy + 30); ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillText("x′", cx + 35, cy - 5);
+  ctx.fillText("y′", cx + 5, cy - 35);
+}
+
+function drawGraphs() {
+  const tScale = 10;
+  const labels = ["x(t)", "y(t)", "vx(t)", "vy(t)"];
+  const colors = ["green", "purple", "orange", "blue"];
+  const getters = [p => p[1], p => p[2], p => p[3], p => p[4]];
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, graphW * 2, canvas.height);
+  for (let i = 0; i < 4; i++) {
+    const col = i < 2 ? 0 : graphW, row = i % 2;
+    const gx = col, gy = row * canvas.height / 2, cy = gy + canvas.height / 4;
+    ctx.strokeStyle = "#000"; ctx.strokeRect(gx, gy, graphW, canvas.height / 2);
+    ctx.strokeStyle = "#aaa";
+    ctx.beginPath(); ctx.moveTo(gx, cy); ctx.lineTo(gx + graphW, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + canvas.height / 2); ctx.stroke();
+    ctx.beginPath();
+    for (let j = 0; j < graphPoints.length; j++) {
+      const t = graphPoints[j][0], val = getters[i](graphPoints[j]);
+      const px = gx + t * tScale, py = cy - val * scale;
+      j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = colors[i]; ctx.stroke();
+    ctx.fillStyle = "#000"; ctx.fillText(labels[i], gx + 5, gy + 15);
+  }
+}
+
+function pauseSimulation() { clearInterval(interval); interval = null; }
+function resetSimulation() {
+  pauseSimulation(); graphPoints = []; time = 0; particles = {}; drawGrid(); drawGraphs();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key.toLowerCase() === "f") {
+    fullscreenGrid = true;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  if (e.key === "Escape") {
+    fullscreenGrid = false;
+    canvas.width = canvasW;
+    canvas.height = canvasH;
+  }
+});
+
+// Init
+resetSimulation();
+</script>
+
+</body>
+</html>

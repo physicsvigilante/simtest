@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html><head>
+  <title>2D Motion Simulator with Profiles</title>
+  <style>
+    body { background-color: #222; color: #eee; font-family: sans-serif; }
+    table { border-collapse: collapse; margin-bottom: 10px; }
+    th, td { border: 1px solid #444; padding: 4px; text-align: center; }
+    input[type="number"], input[type="text"] {
+      width: 80px; background: #333; color: #fff;
+      border: 1px solid #555; padding: 2px; text-align: right;
+    }
+    canvas { border: 1px solid black; display: block; background: #eef; }
+    button { margin: 6px 6px 0 0; }
+  </style>
+</head>
+<body>
+
+<h3>2D Motion Simulator</h3>
+<button onclick="toggle('background')">Toggle Background Grid</button>
+<button onclick="toggle('black')">Toggle Black Grid</button>
+<button onclick="toggle('grey')">Toggle Grey Grid</button>
+<br><br>
+
+<label>Red X Profile:</label>
+<input id="redXProfile" type="text" placeholder="v:1:2::3:1" value="v:0:2::3:5">
+<label>Red Y Profile:</label>
+<input id="redYProfile" type="text" placeholder="a:2:2::2:2" value="a:2:-5::3:4"><br><br>
+<label>Blue X Profile:</label>
+<input id="blueXProfile" type="text" placeholder="v:1:2::3:1" value="">
+<label>Blue Y Profile:</label>
+<input id="blueYProfile" type="text" placeholder="a:2:2::2:2" value=""><br><br>
+
+<table>
+  <thead>
+    <tr><th>Particle</th><th>x₀</th><th>y₀</th><th>uₓ</th><th>uᵧ</th><th>aₓ</th><th>aᵧ</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Red</td>
+      <td><input id="x0r" type="number" value="0"></td><td><input id="y0r" type="number" value="-10"></td>
+      <td><input id="uxr" type="number" value="0"></td><td><input id="uyr" type="number" value="0"></td>
+      <td><input id="axr" type="number" value=""></td><td><input id="ayr" type="number" value="2"></td></tr>
+    <tr><td>Blue</td>
+      <td><input id="x0b" type="number" value="0"></td><td><input id="y0b" type="number" value="-10"></td>
+      <td><input id="uxb" type="number" value="0"></td><td><input id="uyb" type="number" value="0"></td>
+      <td><input id="axb" type="number" value=""></td><td><input id="ayb" type="number" value="2"></td></tr>
+  </tbody>
+</table>
+
+<button onclick="startSimulation()">Start</button>
+<button onclick="saveHTML()">Save State as HTML</button>
+
+<button onclick="pauseSimulation()">Pause</button>
+<button onclick="resetSimulation()">Reset</button>
+<canvas id="canvas" width="1200" height="500"></canvas>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+let scale = 20, graphW = 200, canvasW = 1200, canvasH = 500;
+canvas.width = canvasW; canvas.height = canvasH;
+
+let fullscreenGrid = false, time = 0, dt = 0.05, interval = null;
+let showGrid = { background: true, black: true, grey: true };
+let particles = {}, graphPoints = [], motionProfiles = {
+  red: { x: [], y: [] }, blue: { x: [], y: [] }
+};
+
+function toggle(type) { showGrid[type] = !showGrid[type]; }
+function getSimX() { return fullscreenGrid ? 0 : canvasW - (canvasW - 2 * graphW); }
+function getSimW() { return fullscreenGrid ? canvas.width : canvasW - 2 * graphW; }
+function getOriginX() { return Math.floor(getSimW()/2/scale)*scale + getSimX(); }
+function getOriginY() { return Math.floor(canvas.height/2/scale)*scale; }
+function worldToCanvas(x,y) { return [getOriginX()+x*scale,getOriginY()-y*scale]; }
+
+function parseProfile(str, x0=0, u0=0) {
+  if (!str || !str.match(/^[av]:/)) return [];
+  const match = str.match(/^([av]):((?:-?\d+(?::)?)+)::((?:-?\d+(?::)?)+)$/);
+  if (!match) return [];
+  const type = match[1], values = match[2].split(":").map(Number), times = match[3].split(":").map(Number);
+  let segments = [], time = 0, v0 = u0;
+  for (let i = 0; i < values.length; i++) {
+    let value = values[i], dur = times[i];
+    segments.push({ type, value, start: time, end: time+dur, x0, v0 });
+    if (type === 'v') { x0 += value*dur; v0 = value; }
+    else { x0 += v0*dur + 0.5*value*dur*dur; v0 += value*dur; }
+    time += dur;
+  }
+  return segments;
+}
+
+function getPosition(t, segments) {
+  if (!segments.length) return { pos: 0, vel: 0 };
+  let s = segments.find(s => t >= s.start && t < s.end) || segments.at(-1);
+  let dt = t - s.start;
+  return s.type === 'v' ? { pos: s.x0 + s.value * dt, vel: s.value }
+                        : { pos: s.x0 + s.v0*dt + 0.5*s.value*dt*dt, vel: s.v0 + s.value*dt };
+}
+
+function getParticle(id) {
+  return {
+    x0: +document.getElementById("x0"+id).value,
+    y0: +document.getElementById("y0"+id).value,
+    ux: +document.getElementById("ux"+id).value,
+    uy: +document.getElementById("uy"+id).value,
+    ax: +document.getElementById("ax"+id).value,
+    ay: +document.getElementById("ay"+id).value,
+    path: []
+  };
+}
+
+function startSimulation() {
+  particles.red = getParticle("r");
+  particles.blue = getParticle("b");
+
+  motionProfiles.red.x = parseProfile(document.getElementById("redXProfile").value.trim(), particles.red.x0, particles.red.ux);
+  motionProfiles.red.y = parseProfile(document.getElementById("redYProfile").value.trim(), particles.red.y0, particles.red.uy);
+  motionProfiles.blue.x = parseProfile(document.getElementById("blueXProfile").value.trim(), particles.blue.x0, particles.blue.ux);
+  motionProfiles.blue.y = parseProfile(document.getElementById("blueYProfile").value.trim(), particles.blue.y0, particles.blue.uy);
+
+  Object.values(particles).forEach(p => p.path = []);
+  graphPoints = []; time = 0;
+  if (!interval) interval = setInterval(simulate, dt * 1000);
+}
+
+function simulate() {
+  ctx.clearRect(0,0,canvas.width,canvas.height); drawGrid();
+  for (const [name, p] of Object.entries(particles)) {
+    const xSegs = motionProfiles[name].x, ySegs = motionProfiles[name].y;
+    const X = xSegs.length ? getPosition(time, xSegs) : { pos: p.x0 + p.ux*time + 0.5*p.ax*time**2, vel: p.ux + p.ax*time };
+    const Y = ySegs.length ? getPosition(time, ySegs) : { pos: p.y0 + p.uy*time + 0.5*p.ay*time**2, vel: p.uy + p.ay*time };
+
+    const [cx, cy] = worldToCanvas(X.pos, Y.pos);
+    p.path.push([cx, cy]);
+
+    ctx.beginPath();
+    p.path.forEach(([x, y], i) => i===0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
+    ctx.strokeStyle = name; ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, 2 * Math.PI);
+    ctx.fillStyle = name; ctx.fill();
+
+    if (name === "red") graphPoints.push([time, X.pos, Y.pos, X.vel, Y.vel]);
+  }
+  if (!fullscreenGrid) drawGraphs();
+  time += dt;
+}
+
+function drawGrid() {
+  const simX = getSimX(), simW = getSimW(), originX = getOriginX(), originY = getOriginY();
+  ctx.fillStyle = "#eef"; ctx.fillRect(simX, 0, simW, canvas.height);
+  if (!showGrid.background) return;
+  ctx.strokeStyle = "#ccc";
+  for (let x = simX; x <= simX + simW; x += scale) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+  for (let y = 0; y <= canvas.height; y += scale) {
+    ctx.beginPath(); ctx.moveTo(simX, y); ctx.lineTo(simX + simW, y); ctx.stroke(); }
+  ctx.strokeStyle = "#000";
+  ctx.beginPath(); ctx.moveTo(simX, originY); ctx.lineTo(simX + simW, originY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(originX, 0); ctx.lineTo(originX, canvas.height); ctx.stroke();
+  ctx.fillText("0", originX+2, originY+12);
+}
+
+function drawGraphs() {
+  const tScale = 10, labels = ["x(t)","y(t)","vx(t)","vy(t)"];
+  const colors = ["green","purple","orange","blue"];
+  const getters = [p=>p[1], p=>p[2], p=>p[3], p=>p[4]];
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, graphW*2, canvas.height);
+  for (let i = 0; i < 4; i++) {
+    const gx = i<2 ? 0 : graphW, gy = (i%2)*canvas.height/2, cy = gy + canvas.height/4;
+    ctx.strokeStyle = "#000"; ctx.strokeRect(gx, gy, graphW, canvas.height/2);
+    ctx.strokeStyle = "#aaa";
+    ctx.beginPath(); ctx.moveTo(gx, cy); ctx.lineTo(gx + graphW, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx, gy + canvas.height/2); ctx.stroke();
+    ctx.beginPath();
+    for (let j = 0; j < graphPoints.length; j++) {
+      const t = graphPoints[j][0], val = getters[i](graphPoints[j]);
+      const px = gx + t*tScale, py = cy - val*scale;
+      j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = colors[i]; ctx.stroke();
+    ctx.fillStyle = "#000"; ctx.fillText(labels[i], gx + 5, gy + 15);
+  }
+}
+
+function pauseSimulation() { clearInterval(interval); interval = null; }
+function resetSimulation() {
+  pauseSimulation(); time = 0; particles = {}; graphPoints = [];
+  drawGrid(); drawGraphs();
+}
+
+document.addEventListener("keydown", e => {
+  if (e.key.toLowerCase() === "f") {
+    fullscreenGrid = true; canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+  }
+  if (e.key === "Escape") {
+    fullscreenGrid = false; canvas.width = canvasW; canvas.height = canvasH;
+  }
+});
+resetSimulation();
+function saveHTML() {
+  const inputs = Array.from(document.querySelectorAll('input'));
+  const doc = document.documentElement.outerHTML;
+  const parser = new DOMParser();
+  const htmlDoc = parser.parseFromString(doc, 'text/html');
+  inputs.forEach(input => {
+    const id = input.id;
+    const value = input.value;
+    const newInput = htmlDoc.getElementById(id);
+    if (newInput) newInput.setAttribute('value', value);
+  });
+
+  const updatedHTML = '<!DOCTYPE html>\n' + htmlDoc.documentElement.outerHTML;
+  const blob = new Blob([updatedHTML], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'motion_simulator_saved.html';
+  a.click();
+}
+
+</script>
+
+</body></html>

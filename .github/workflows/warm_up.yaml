@@ -1,0 +1,35 @@
+name: 🔥 Keep App Warm
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # every 5 minutes (UTC)
+  workflow_dispatch:       # manual trigger
+
+jobs:
+  ping-site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 🔥 Ping warm route with secret token (retry up to 3x)
+        env:
+          WARM_TOKEN: ${{ secrets.WARM_TOKEN }}
+        run: |
+          echo "Pinging warm route with token..."
+
+          n=0
+          until [ $n -ge 3 ]; do
+            if curl --silent --show-error --fail --location --max-time 8 \
+              "https://www.physicsvigilante.com/_warm?_k=${WARM_TOKEN}"; then
+              echo "✅ Warm route succeeded"
+              break
+            fi
+            n=$((n+1))
+            echo "Retry $n..."
+            sleep 5
+          done
+
+          if [ $n -ge 3 ]; then
+            echo "❌ Failed to ping warm route after 3 attempts"
+            exit 1
+          fi
